@@ -1,0 +1,19 @@
+name: "Family Hub"
+description: "Family shopping list, calendar, and messaging"
+version: "1.0.0"
+slug: "familyhub"
+init: false
+arch:
+  - aarch64
+  - armv7
+  - amd64
+startup: services
+boot: auto
+ports:
+  3000/tcp: 3000
+map:
+  - share:rw
+ingress: true
+ingress_port: 3000
+panel_icon: mdi:home-heart
+panel_title: Family Hub
