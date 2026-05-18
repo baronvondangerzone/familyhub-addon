@@ -1,6 +1,6 @@
 name: "Family Hub"
 description: "Family shopping list, calendar, and messaging"
-version: "1.0.1"
+version: "1.0.2"
 slug: "familyhub"
 init: false
 arch:
