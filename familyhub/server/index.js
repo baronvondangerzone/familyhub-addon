@@ -1,0 +1,31 @@
+const express=require('express'),cors=require('cors'),Database=require('better-sqlite3'),path=require('path'),fs=require('fs');
+const app=express(),PORT=process.env.PORT||3000,DB_PATH=process.env.DB_PATH||path.join(__dirname,'../data/familyhub.db');
+fs.mkdirSync(path.dirname(DB_PATH),{recursive:true});
+const db=new Database(DB_PATH);
+db.pragma('journal_mode = WAL');
+db.exec(`CREATE TABLE IF NOT EXISTS members(id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT NOT NULL,initials TEXT NOT NULL,color TEXT NOT NULL,created_at DATETIME DEFAULT CURRENT_TIMESTAMP);CREATE TABLE IF NOT EXISTS shopping_items(id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT NOT NULL,added_by TEXT NOT NULL,priority TEXT NOT NULL DEFAULT 'P2',need_by DATE,price REAL DEFAULT 0,category TEXT DEFAULT 'General',note TEXT DEFAULT '',done INTEGER DEFAULT 0,done_at DATETIME,created_at DATETIME DEFAULT CURRENT_TIMESTAMP);CREATE TABLE IF NOT EXISTS messages(id INTEGER PRIMARY KEY AUTOINCREMENT,member_id INTEGER NOT NULL,member_name TEXT NOT NULL,text TEXT NOT NULL,created_at DATETIME DEFAULT CURRENT_TIMESTAMP);CREATE TABLE IF NOT EXISTS events(id INTEGER PRIMARY KEY AUTOINCREMENT,title TEXT NOT NULL,date TEXT NOT NULL,color TEXT DEFAULT '#6c8eff',member TEXT,source TEXT DEFAULT 'manual',external_id TEXT,created_at DATETIME DEFAULT CURRENT_TIMESTAMP);CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT);`);
+if(db.prepare('SELECT COUNT(*) as c FROM members').get().c===0){const i=db.prepare('INSERT INTO members(name,initials,color)VALUES(?,?,?)');i.run('Dad','DA','#6c8eff');i.run('Mom','MO','#f472b6');i.run('Alex','AL','#34d399');i.run('Sam','SA','#fbbf24');}
+app.use(cors());app.use(express.json());
+app.get('/api/health',(req,res)=>res.json({ok:true}));
+app.get('/api/members',(req,res)=>res.json(db.prepare('SELECT id,name,initials,color FROM members ORDER BY id').all()));
+app.post('/api/members',(req,res)=>{const{name,initials,color}=req.body;const r=db.prepare('INSERT INTO members(name,initials,color)VALUES(?,?,?)').run(name,initials,color);res.json({id:r.lastInsertRowid,name,initials,color});});
+app.put('/api/members/:id',(req,res)=>{const{name,initials,color}=req.body;db.prepare('UPDATE members SET name=?,initials=?,color=? WHERE id=?').run(name,initials,color,req.params.id);res.json({ok:true});});
+app.delete('/api/members/:id',(req,res)=>{db.prepare('DELETE FROM members WHERE id=?').run(req.params.id);res.json({ok:true});});
+app.get('/api/shopping',(req,res)=>res.json(db.prepare("SELECT * FROM shopping_items ORDER BY done ASC,CASE priority WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 WHEN 'P3' THEN 3 ELSE 4 END ASC,need_by ASC,created_at DESC").all()));
+app.post('/api/shopping',(req,res)=>{const{name,added_by,priority,need_by,price,category,note}=req.body;const r=db.prepare('INSERT INTO shopping_items(name,added_by,priority,need_by,price,category,note)VALUES(?,?,?,?,?,?,?)').run(name,added_by,priority||'P2',need_by||null,price||0,category||'General',note||'');res.json({id:r.lastInsertRowid,...req.body});});
+app.put('/api/shopping/:id',(req,res)=>{const{name,priority,need_by,price,category,note,done}=req.body;db.prepare('UPDATE shopping_items SET name=?,priority=?,need_by=?,price=?,category=?,note=?,done=?,done_at=? WHERE id=?').run(name,priority,need_by||null,price,category,note,done?1:0,done?new Date().toISOString():null,req.params.id);res.json({ok:true});});
+app.patch('/api/shopping/:id/toggle',(req,res)=>{const item=db.prepare('SELECT done FROM shopping_items WHERE id=?').get(req.params.id);if(!item)return res.status(404).json({error:'Not found'});const nd=item.done?0:1;db.prepare('UPDATE shopping_items SET done=?,done_at=? WHERE id=?').run(nd,nd?new Date().toISOString():null,req.params.id);res.json({done:nd===1});});
+app.delete('/api/shopping/:id',(req,res)=>{db.prepare('DELETE FROM shopping_items WHERE id=?').run(req.params.id);res.json({ok:true});});
+app.delete('/api/shopping/done/all',(req,res)=>{db.prepare('DELETE FROM shopping_items WHERE done=1').run();res.json({ok:true});});
+app.get('/api/messages',(req,res)=>{const limit=parseInt(req.query.limit)||50;res.json(db.prepare('SELECT * FROM messages ORDER BY created_at DESC LIMIT ?').all(limit).reverse());});
+app.post('/api/messages',(req,res)=>{const{member_id,member_name,text}=req.body;const r=db.prepare('INSERT INTO messages(member_id,member_name,text)VALUES(?,?,?)').run(member_id,member_name,text);res.json({id:r.lastInsertRowid,member_id,member_name,text,created_at:new Date().toISOString()});});
+app.get('/api/messages/since/:id',(req,res)=>res.json(db.prepare('SELECT * FROM messages WHERE id > ? ORDER BY created_at ASC').all(req.params.id)));
+app.get('/api/events',(req,res)=>{const{from,to}=req.query;let q='SELECT * FROM events';const p=[];if(from&&to){q+=' WHERE date >= ? AND date <= ?';p.push(from,to);}q+=' ORDER BY date ASC';res.json(db.prepare(q).all(...p));});
+app.post('/api/events',(req,res)=>{const{title,date,color,member,source,external_id}=req.body;const r=db.prepare('INSERT INTO events(title,date,color,member,source,external_id)VALUES(?,?,?,?,?,?)').run(title,date,color||'#6c8eff',member||'',source||'manual',external_id||null);res.json({id:r.lastInsertRowid,...req.body});});
+app.put('/api/events/:id',(req,res)=>{const{title,date,color,member}=req.body;db.prepare('UPDATE events SET title=?,date=?,color=?,member=? WHERE id=?').run(title,date,color,member,req.params.id);res.json({ok:true});});
+app.delete('/api/events/:id',(req,res)=>{db.prepare('DELETE FROM events WHERE id=?').run(req.params.id);res.json({ok:true});});
+app.get('/api/settings',(req,res)=>{const rows=db.prepare('SELECT key,value FROM settings').all();const s={};rows.forEach(r=>{s[r.key]=r.value;});res.json(s);});
+app.post('/api/settings',(req,res)=>{const stmt=db.prepare('INSERT OR REPLACE INTO settings(key,value)VALUES(?,?)');Object.entries(req.body).forEach(([k,v])=>stmt.run(k,v));res.json({ok:true});});
+const bp=path.join(__dirname,'client/build');
+if(fs.existsSync(bp)){app.use(express.static(bp));app.get('*',(req,res)=>{if(!req.path.startsWith('/api'))res.sendFile(path.join(bp,'index.html'));});}
+app.listen(PORT,'0.0.0.0',()=>{console.log(`Family Hub running on port ${PORT}`);console.log(`Database: ${DB_PATH}`);});
